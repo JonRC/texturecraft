@@ -318,8 +318,7 @@ impl Session {
         let Some((last, carry)) = st.uv.as_mut() else { return };
         let Some(cache) = self.caches.get_mut(st.ts) else { return };
         let b = &st.stroke.settings;
-        let p = pressure.clamp(0.0, 1.0);
-        let radius = b.size * 2.0 * if p < 1.0 { b.min_size + (1.0 - b.min_size) * p } else { 1.0 };
+        let radius = b.uv_stamp_radius(pressure);
         let step = (b.spacing * 2.0 * radius).max(1e-5);
         let mut points = Vec::new();
         match *last {
