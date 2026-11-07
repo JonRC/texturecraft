@@ -96,3 +96,23 @@ fn a_light_pen_shows_the_smaller_footprint_it_paints() {
     assert_eq!(light.len(), 1);
     assert!((light[0] / full[0] - 0.75).abs() < 1e-3, "half pressure shows 0.75 of the radius: {} vs {}", light[0], full[0]);
 }
+
+#[test]
+fn dragging_out_of_the_2d_view_brings_the_system_pointer_back() {
+    let mut h = harness();
+    let c = egui::pos2(800.0, 480.0);
+    h.hover_at(c);
+    h.run_steps(3);
+    assert_eq!(cursor(&h), CursorIcon::None, "inside the view the brush outline replaces the pointer");
+    // Press inside the view, then carry the pointer out of the view (top-left corner) with the button held.
+    h.event(Event::PointerButton { pos: c, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    h.run_steps(2);
+    assert_eq!(cursor(&h), CursorIcon::None, "still inside while dragging");
+    let outside = egui::pos2(2.0, 2.0);
+    h.hover_at(outside);
+    h.run_steps(3);
+    assert_ne!(cursor(&h), CursorIcon::None, "outside the view the pointer is visible even during a drag");
+    assert!(rings_at(&h, outside).is_empty(), "no brush outline outside the view");
+    h.event(Event::PointerButton { pos: outside, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.run_steps(2);
+}
