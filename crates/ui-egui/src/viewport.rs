@@ -1300,6 +1300,9 @@ fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         && !path_tool
         && brush_tool(app.session.tool.tool)
         && !response.dragged_by(PointerButton::Middle)
+        // During a drag egui keeps reporting a hover position after the pointer left the view:
+        // the system pointer is hidden only while the pointer is really over it.
+        && ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p))
         // While a Ctrl+drag changes the brush, its cursor stays where the drag began.
         && let Some(hp) = if adjusting { ui.input(|i| i.pointer.press_origin()) } else { response.hover_pos().or_else(|| response.interact_pointer_pos()) }
         // The view header's pickers keep the normal pointer.
