@@ -1054,7 +1054,9 @@ fn brush_readout(app: &TextureCraftApp, ui: &Ui, resp: &egui::Response, adjustin
     let Some(right) = brush_drag_button(resp).filter(|_| adjusting) else { return };
     let Some(at) = ui.input(|i| i.pointer.press_origin()) else { return };
     // The pointer would cover the values; the brush cursor stays where the drag began.
-    ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+    if ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| resp.rect.contains(p)) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+    }
     let b = &app.session.tool.brush;
     let text = if right {
         format!("{} {:.1}   {} {:.0}", tr("Size"), b.size / 0.25 * 100.0, tr("Hardness"), b.hardness * 100.0)
@@ -1296,13 +1298,15 @@ fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
     }
     // Brush cursor: the stamp's size and hardness at the pointer, as in the 3D view.
     let cursor_mode = app.ui.mode == crate::state::Mode::Painting && !alt && !v_held;
+    let pointer_in_view = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p));
     if cursor_mode
         && !path_tool
         && brush_tool(app.session.tool.tool)
         && !response.dragged_by(PointerButton::Middle)
         // During a drag egui keeps reporting a hover position after the pointer left the view:
-        // the system pointer is hidden only while the pointer is really over it.
-        && ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p))
+        // the system pointer is hidden only while the pointer is really over it. A Ctrl+drag that
+        // changes the brush keeps its outline at the press origin wherever the pointer goes.
+        && (adjusting || pointer_in_view)
         // While a Ctrl+drag changes the brush, its cursor stays where the drag began.
         && let Some(hp) = if adjusting { ui.input(|i| i.pointer.press_origin()) } else { response.hover_pos().or_else(|| response.interact_pointer_pos()) }
         // The view header's pickers keep the normal pointer.
@@ -1310,7 +1314,9 @@ fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
     {
         // The stamp's radius as `continue_stroke_uv` paints it, including a light pen's smaller footprint.
         let r = (to_screen(app.session.tool.brush.uv_stamp_radius(pen_pressure(ui)), 0.0).x - to_screen(0.0, 0.0).x).abs().max(1.5);
-        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        if pointer_in_view {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        }
         brush_cursor_2d(&painter, hp, r, app.session.tool.brush.hardness);
     }
     brush_readout(app, ui, &response, adjusting);

@@ -116,3 +116,28 @@ fn dragging_out_of_the_2d_view_brings_the_system_pointer_back() {
     h.event(Event::PointerButton { pos: outside, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
     h.run_steps(2);
 }
+
+#[test]
+fn a_ctrl_right_drag_out_of_the_2d_view_keeps_its_outline_at_the_anchor() {
+    let mut h = harness();
+    let c = egui::pos2(800.0, 480.0);
+    let ctrl = egui::Modifiers::COMMAND;
+    h.hover_at(c);
+    h.run_steps(2);
+    h.event(Event::ModifiersChanged(ctrl));
+    h.event(Event::PointerButton { pos: c, button: egui::PointerButton::Secondary, pressed: true, modifiers: ctrl });
+    h.run_steps(2);
+    // Drag a little inside the view: the outline is anchored and the pointer hidden.
+    h.hover_at(c + egui::vec2(10.0, 0.0));
+    h.run_steps(3);
+    assert_eq!(rings_at(&h, c).len(), 1, "anchored outline while the pointer is in the view");
+    assert_eq!(cursor(&h), CursorIcon::None);
+    // Carry the pointer out of the view: the outline stays at the anchor, the system pointer is back.
+    h.hover_at(egui::pos2(2.0, 2.0));
+    h.run_steps(3);
+    assert_eq!(rings_at(&h, c).len(), 1, "the outline stays at the press origin outside the view");
+    assert_ne!(cursor(&h), CursorIcon::None, "outside the view the pointer is visible");
+    h.event(Event::PointerButton { pos: egui::pos2(2.0, 2.0), button: egui::PointerButton::Secondary, pressed: false, modifiers: ctrl });
+    h.event(Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(2);
+}
