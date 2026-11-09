@@ -176,7 +176,16 @@ fn colour_params_name_their_colour_space() {
     for spec in command_specs() {
         if ["color?", "colors?", "Color?"].iter().any(|k| spec.params.contains(k)) {
             assert!(spec.params.contains("linear"), "{}: {}", spec.id, spec.params);
+            let hex = spec.params.matches("\"#rrggbb\"").count();
+            assert_eq!(hex, spec.params.matches("\"#rrggbb\" sRGB").count(), "{}: {}", spec.id, spec.params);
         }
+    }
+    // These read their colours through `color_param`, which takes both forms.
+    for id in
+        ["layer.add.fill", "layer.fill.set", "effect.add.fill", "effect.add.filter", "tool.material", "mask.add.colorSelection", "resource.text", "display.set"]
+    {
+        let spec = command_specs().iter().find(|c| c.id == id).unwrap();
+        assert!(spec.params.contains("[r,g,b] linear or \"#rrggbb\" sRGB"), "{id}: {}", spec.params);
     }
     let base_color = |color: Value| {
         let mut s = session();

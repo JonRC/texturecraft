@@ -264,7 +264,7 @@ pub(crate) fn apply(p: &Value, f: &mut Filter, cmd: &str) -> Result<()> {
                 let parsed: Option<Vec<[f32; 3]>> = list.as_array().and_then(|a| a.iter().map(|c| color_of(c).map(|v| v.map(|x| x.clamp(0.0, 1.0)))).collect());
                 match parsed {
                     Some(c) if (1..=16).contains(&c.len()) => *colors = c,
-                    _ => return Err(bad(cmd, "`colors` must be 1 to 16 colors ([r, g, b] linear or \"#rrggbb\")")),
+                    _ => return Err(bad(cmd, "`colors` must be 1 to 16 colors ([r, g, b] linear or \"#rrggbb\" sRGB)")),
                 }
             }
         }
@@ -306,7 +306,7 @@ pub(crate) fn apply(p: &Value, f: &mut Filter, cmd: &str) -> Result<()> {
         Filter::ReplaceColor { from, to, tolerance, softness } => {
             for (key, slot) in [("from", from), ("to", to)] {
                 if p.get(key).is_some() {
-                    let v = color_param(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a color ([r, g, b] linear or \"#rrggbb\")")))?;
+                    let v = color_param(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a color ([r, g, b] linear or \"#rrggbb\" sRGB)")))?;
                     *slot = v.map(|x| x.clamp(0.0, 1.0));
                 }
             }
