@@ -335,3 +335,4 @@ Errors print `texturecraft-cli <command>: error: …` and exit 1; usage errors e
 console program and never opens a window; `render` needs a GPU or software adapter, unless it path
 traces (`--samples`). Like the desktop app, it takes the high-performance GPU; `WGPU_ADAPTER_NAME`
 (part of the adapter's name) or `WGPU_POWER_PREF` (`high`, `low` or `none`) picks another.
+`WGPU_BACKEND` narrows the list first, so a name on a backend it leaves out matches nothing.
