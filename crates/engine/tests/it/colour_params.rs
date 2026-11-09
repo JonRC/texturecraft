@@ -23,13 +23,15 @@ fn state(s: &Session) -> Value {
 
 #[test]
 fn a_malformed_colour_is_an_error() {
-    let rows: [(&str, &str, Value, &str); 12] = [
+    let rows: [(&str, &str, Value, &str); 14] = [
         ("fill layer, short form", "layer.add.fill", json!({"color": "#fff"}), "color"),
         ("fill layer, a word for a component", "layer.add.fill", json!({"color": [1, "bad", 0]}), "color"),
         ("content fill effect, not hex", "effect.add.fill", json!({"target": "content", "color": "#zzzzzz"}), "color"),
         ("fill source, a name", "layer.fill.set", json!({"channel": "baseColor", "color": "white"}), "color"),
+        ("fill source, no color and a bad value", "layer.fill.set", json!({"channel": "baseColor", "value": "white"}), "value"),
         ("procedural low, too short", "layer.fill.set", json!({"channel": "baseColor", "procedural": "clouds", "low": [0.5, 0.5]}), "low"),
         ("brush, five digits", "tool.material", json!({"channel": "baseColor", "color": "c8102"}), "color"),
+        ("brush, no color and a bad value", "tool.material", json!({"channel": "baseColor", "value": [1, "bad", 0]}), "value"),
         ("brush with a mask value, short form", "tool.material", json!({"maskValue": 0.25, "channel": "baseColor", "color": "#fff"}), "color"),
         ("ID colour mask, a name", "mask.add.colorSelection", json!({"color": "red"}), "color"),
         ("scatter, alpha", "display.set", json!({"scatterColor": "#c8102e80"}), "scatterColor"),
@@ -45,5 +47,20 @@ fn a_malformed_colour_is_an_error() {
             Err(e) => assert!(e.to_string().contains(&format!("`{key}`")), "{name}: {e}"),
         }
         assert_eq!(state(&s), before, "{name}: a failed {cmd} changed the session");
+    }
+}
+
+/// `value` is the fallback for a missing `color`: with a good `color` it is not read at all.
+#[test]
+fn a_good_colour_is_not_failed_by_a_bad_value() {
+    let rows: [(&str, &str, Value); 2] = [
+        ("fill source", "layer.fill.set", json!({"channel": "baseColor", "color": "#c8102e", "value": "bad"})),
+        ("brush", "tool.material", json!({"channel": "baseColor", "color": [0.5, 0.25, 1], "value": "bad"})),
+    ];
+    for (name, cmd, params) in rows {
+        let mut s = session();
+        if let Err(e) = execute(&mut s, cmd, &params) {
+            panic!("{name}: {cmd} {params} failed: {e}");
+        }
     }
 }

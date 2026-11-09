@@ -193,6 +193,15 @@ pub(crate) fn color_param(cmd: &str, p: &Value, key: &str) -> Result<Option<[f32
     }
 }
 
+/// `color`, or `value` when there is no `color` (a fill or brush channel takes either). `value` is
+/// read only then, so it cannot fail a call that has a good `color`.
+pub(crate) fn color_or_value(cmd: &str, p: &Value) -> Result<Option<[f32; 3]>> {
+    match color_param(cmd, p, "color")? {
+        Some(color) => Ok(Some(color)),
+        None => color_param(cmd, p, "value"),
+    }
+}
+
 /// A color value (see [`color_param`]).
 pub(crate) fn color_of(v: &Value) -> Option<[f32; 3]> {
     match v {
@@ -235,6 +244,27 @@ mod tests {
             match (&got, expected) {
                 (Ok(color), Ok(want)) => assert_eq!(*color, want, "{name}"),
                 (Err(e), Err(())) => assert!(e.to_string().contains("`color` must be a color"), "{name}: {e}"),
+                _ => panic!("{name}: {got:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn value_is_read_only_without_a_color() {
+        let rows = [
+            ("color", json!({"color": [0.5, 0.25, 1]}), Ok(Some([0.5, 0.25, 1.0]))),
+            ("value", json!({"value": 0.5}), Ok(Some([0.5; 3]))),
+            ("color wins over value", json!({"color": [1, 0, 0], "value": 0.5}), Ok(Some([1.0, 0.0, 0.0]))),
+            ("good color, bad value", json!({"color": [1, 0, 0], "value": "bad"}), Ok(Some([1.0, 0.0, 0.0]))),
+            ("no color, bad value", json!({"value": "bad"}), Err("`value`")),
+            ("bad color, good value", json!({"color": "bad", "value": 0.5}), Err("`color`")),
+            ("neither", json!({}), Ok(None)),
+        ];
+        for (name, params, expected) in rows {
+            let got = color_or_value("test.cmd", &params);
+            match (&got, expected) {
+                (Ok(color), Ok(want)) => assert_eq!(*color, want, "{name}"),
+                (Err(e), Err(key)) => assert!(e.to_string().contains(key), "{name}: {e}"),
                 _ => panic!("{name}: {got:?}"),
             }
         }

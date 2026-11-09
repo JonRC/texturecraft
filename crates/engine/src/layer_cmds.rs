@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 use texturecraft_core::{BlendMode, Channel, ChannelBlend, EffectKind, Fill, Layer, LayerId, LayerKind, Procedural, ProceduralKind, Projection, Source};
 
 use crate::commands::{
-    CommandSpec, always, bad, blend_param, boolp, channel_param, color_param, content_param, f32p, has_layer, layer_param, normal_format_param, strp, u64p,
+    CommandSpec, always, bad, blend_param, boolp, channel_param, color_or_value, color_param, content_param, f32p, has_layer, layer_param, normal_format_param,
+    strp, u64p,
 };
 use crate::{EngineError, Result, Session, cmd, session::StackTarget};
 
@@ -328,7 +329,7 @@ fn fill_set(s: &mut Session, p: &Value) -> Result<Value> {
         pr.invert = boolp(p, "invert").unwrap_or(false);
         let (low, high) = (color_param(CMD, p, "low")?.unwrap_or([0.0; 3]), color_param(CMD, p, "high")?.unwrap_or([1.0; 3]));
         Some(Source::Procedural { pattern: pr, low, high })
-    } else if let Some(c) = color_param(CMD, p, "color")?.or(color_param(CMD, p, "value")?) {
+    } else if let Some(c) = color_or_value(CMD, p)? {
         Some(Source::Uniform(c))
     } else if let Some(name) = strp(p, "image") {
         Some(Source::Image { name: name.to_string(), normal_format: normal_format.unwrap_or_default() })

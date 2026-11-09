@@ -6,7 +6,7 @@ use texturecraft_core::Channel;
 use texturecraft_geom::glam::Vec2;
 use texturecraft_paint::{Alignment, BrushAlpha, alphas};
 
-use crate::commands::{CommandSpec, always, bad, boolp, channel_param, color_of, color_param, f32p, strp};
+use crate::commands::{CommandSpec, always, bad, boolp, channel_param, color_of, color_or_value, f32p, strp};
 use crate::fill_hit_test::FillHitTest;
 use crate::fill_mode::FillMode;
 use crate::session::{CloneFrom, CloneSource, Tool};
@@ -246,7 +246,7 @@ fn material(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "tool.material";
     // Read every param before changing the tool, so a bad one changes nothing
     let channel = channel_param(CMD, p, "channel")?;
-    let color = color_param(CMD, p, "color")?.or(color_param(CMD, p, "value")?);
+    let color = color_or_value(CMD, p)?;
 
     if let Some(v) = f32p(p, "maskValue") {
         s.tool.mask_value = v.clamp(0.0, 1.0);
