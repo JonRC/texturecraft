@@ -47,6 +47,24 @@ pub static LANGUAGES: [Language; COUNT] = [
 static MAPS: [OnceLock<HashMap<&'static str, &'static str>>; COUNT] = [const { OnceLock::new() }; COUNT];
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
+/// Display labels belong to the UI; the model exposes only map identities
+pub(crate) fn baked_map_label(map: texturecraft_engine::core::BakedMap) -> &'static str {
+    use texturecraft_engine::core::BakedMap;
+
+    match map {
+        BakedMap::Normal => n_("Normal"),
+        BakedMap::WorldNormal => n_("World Space Normal"),
+        BakedMap::Id => n_("ID"),
+        BakedMap::AmbientOcclusion => n_("Ambient Occlusion"),
+        BakedMap::Curvature => n_("Curvature"),
+        BakedMap::Position => n_("Position"),
+        BakedMap::Thickness => n_("Thickness"),
+        BakedMap::Height => n_("Height"),
+        BakedMap::BentNormal => n_("Bent Normals"),
+        BakedMap::Opacity => n_("Opacity"),
+    }
+}
+
 /// Switch the UI language (unknown codes fall back to English).
 pub fn set_language(code: &str) {
     CURRENT.store(LANGUAGES.iter().position(|l| l.code == code).unwrap_or(0), Ordering::Relaxed);
@@ -116,22 +134,29 @@ pub fn os_language() -> &'static str {
     locale.map_or("en", |l| language_for_locale(&l))
 }
 
+/// Tests that switch the global UI language, or draw the UI under it, run one at a time.
+#[cfg(test)]
+pub(crate) static TEST_LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
+    use super::TEST_LANGUAGE as LANGUAGE;
     use super::*;
-
-    /// Tests that switch the global UI language run one at a time.
-    static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Every key the UI looks up: `tr("…")` / `trf("…"` literals in the sources, plus the
     /// static catalogs whose labels are translated where they are shown.
     fn keys() -> Vec<String> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut keys = Vec::new();
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_some_and(|e| e == "rs") {
-                literals(&std::fs::read_to_string(&path).unwrap(), &mut keys);
+        let mut directories = vec![dir];
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() && path.file_name().is_some_and(|name| name != "i18n") {
+                    directories.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    literals(&std::fs::read_to_string(path).unwrap(), &mut keys);
+                }
             }
         }
         keys.extend(catalog_keys().into_iter().map(str::to_owned));
@@ -143,7 +168,7 @@ mod tests {
     /// The labels of the menu catalog, panels, shortcuts, shelf tabs and engine enums that are
     /// translated where they are shown.
     fn catalog_keys() -> Vec<&'static str> {
-        use texturecraft_engine::core::{BakedMap, BlendMode, Channel, EffectKind, GeneratorKind, ProceduralKind};
+        use texturecraft_engine::core::{BlendMode, Channel, EffectKind, GeneratorKind, ProceduralKind};
         use texturecraft_engine::filter_lib::{FILTERS, build, scalar_params};
         let mut k: Vec<&'static str> = Vec::new();
         k.extend(crate::menus::TOP);
@@ -159,7 +184,6 @@ mod tests {
         k.extend(crate::shelf::TABS.iter().map(|t| t.2));
         k.extend(Channel::ALL.iter().flat_map(|c| [c.label(), c.short()]));
         k.extend(BlendMode::all().map(|m| m.label()));
-        k.extend(BakedMap::ALL.iter().map(|m| m.label()));
         k.extend(texturecraft_engine::formats::export::VirtualMap::ALL.iter().map(|m| m.label()));
         k.extend(texturecraft_engine::Tool::ALL.iter().map(|t| t.label()));
         k.extend(ProceduralKind::ALL.iter().map(|p| p.label()));
