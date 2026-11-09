@@ -243,11 +243,16 @@ pub(crate) fn brush_json(s: &Session) -> Value {
 }
 
 fn material(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "tool.material";
+    // Read every param before changing the tool, so a bad one changes nothing
+    let channel = channel_param(CMD, p, "channel")?;
+    let color = color_param(CMD, p, "color")?.or(color_param(CMD, p, "value")?);
+
     if let Some(v) = f32p(p, "maskValue") {
         s.tool.mask_value = v.clamp(0.0, 1.0);
     }
-    if let Some(c) = channel_param("tool.material", p, "channel")? {
-        if let Some(v) = color_param("tool.material", p, "color")?.or(color_param("tool.material", p, "value")?) {
+    if let Some(c) = channel {
+        if let Some(v) = color {
             let v = if c == Channel::Height { v.map(|x| x.clamp(-1.0, 1.0)) } else { v.map(|x| x.clamp(0.0, 1.0)) };
             s.tool.values.insert(c, v);
             s.tool.enabled.insert(c);

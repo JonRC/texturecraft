@@ -197,7 +197,7 @@ pub(crate) fn color_param(cmd: &str, p: &Value, key: &str) -> Result<Option<[f32
 pub(crate) fn color_of(v: &Value) -> Option<[f32; 3]> {
     match v {
         Value::Array(a) if a.len() >= 3 => {
-            let v: Vec<f32> = a.iter().take(3).map(|x| x.as_f64().unwrap_or(0.0) as f32).collect();
+            let v: Vec<f32> = a.iter().take(3).map(|x| x.as_f64().map(|n| n as f32)).collect::<Option<_>>()?;
             if v.iter().all(|x| x.is_finite()) { Some([v[0], v[1], v[2]]) } else { None }
         }
         Value::Number(n) => n.as_f64().map(|v| [v as f32; 3]).filter(|v| v[0].is_finite()),
@@ -226,6 +226,8 @@ mod tests {
             ("grey", json!({"color": 0.5}), Ok(Some([0.5; 3]))),
             ("bad hex", json!({"color": "#fff"}), Err(())),
             ("short array", json!({"color": [1, 0]}), Err(())),
+            ("a word for a component", json!({"color": [1, "bad", 0]}), Err(())),
+            ("a null component", json!({"color": [0.5, null, 0.5]}), Err(())),
             ("object", json!({"color": {"r": 1}}), Err(())),
         ];
         for (name, params, expected) in rows {
