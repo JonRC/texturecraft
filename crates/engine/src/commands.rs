@@ -184,9 +184,13 @@ pub(crate) fn blend_param(cmd: &str, p: &Value, key: &str) -> Result<Option<Blen
     }
 }
 
-/// A color: `[r, g, b]` (linear 0..1) or `"#rrggbb"` (sRGB hex, converted to linear).
-pub(crate) fn color_param(p: &Value, key: &str) -> Option<[f32; 3]> {
-    color_of(p.get(key)?)
+/// A color: `[r, g, b]` (linear 0..1) or `"#rrggbb"` (sRGB hex, converted to linear). Absent or
+/// `null` is `None`; any other value that is not a color is an error rather than the default.
+pub(crate) fn color_param(cmd: &str, p: &Value, key: &str) -> Result<Option<[f32; 3]>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => color_of(v).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a color, [r, g, b] (linear 0..1) or \"#rrggbb\" (sRGB), not {v}"))),
+    }
 }
 
 /// A color value (see [`color_param`]).
@@ -206,5 +210,31 @@ pub(crate) fn color_of(v: &Value) -> Option<[f32; 3]> {
             Some([c(0)?, c(2)?, c(4)?])
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_param_that_is_not_a_color_is_an_error() {
+        let rows = [
+            ("absent", json!({}), Ok(None)),
+            ("null", json!({"color": null}), Ok(None)),
+            ("array", json!({"color": [0.5, 0.25, 1]}), Ok(Some([0.5, 0.25, 1.0]))),
+            ("grey", json!({"color": 0.5}), Ok(Some([0.5; 3]))),
+            ("bad hex", json!({"color": "#fff"}), Err(())),
+            ("short array", json!({"color": [1, 0]}), Err(())),
+            ("object", json!({"color": {"r": 1}}), Err(())),
+        ];
+        for (name, params, expected) in rows {
+            let got = color_param("test.cmd", &params, "color");
+            match (&got, expected) {
+                (Ok(color), Ok(want)) => assert_eq!(*color, want, "{name}"),
+                (Err(e), Err(())) => assert!(e.to_string().contains("`color` must be a color"), "{name}: {e}"),
+                _ => panic!("{name}: {got:?}"),
+            }
+        }
     }
 }

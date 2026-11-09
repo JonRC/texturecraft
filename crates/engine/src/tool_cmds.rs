@@ -6,7 +6,7 @@ use texturecraft_core::Channel;
 use texturecraft_geom::glam::Vec2;
 use texturecraft_paint::{Alignment, BrushAlpha, alphas};
 
-use crate::commands::{CommandSpec, always, bad, boolp, channel_param, color_param, f32p, strp};
+use crate::commands::{CommandSpec, always, bad, boolp, channel_param, color_of, color_param, f32p, strp};
 use crate::fill_hit_test::FillHitTest;
 use crate::fill_mode::FillMode;
 use crate::session::{CloneFrom, CloneSource, Tool};
@@ -247,7 +247,7 @@ fn material(s: &mut Session, p: &Value) -> Result<Value> {
         s.tool.mask_value = v.clamp(0.0, 1.0);
     }
     if let Some(c) = channel_param("tool.material", p, "channel")? {
-        if let Some(v) = color_param(p, "color").or_else(|| color_param(p, "value")) {
+        if let Some(v) = color_param("tool.material", p, "color")?.or(color_param("tool.material", p, "value")?) {
             let v = if c == Channel::Height { v.map(|x| x.clamp(-1.0, 1.0)) } else { v.map(|x| x.clamp(0.0, 1.0)) };
             s.tool.values.insert(c, v);
             s.tool.enabled.insert(c);
@@ -290,7 +290,7 @@ fn stencil(s: &mut Session, p: &Value) -> Result<Value> {
         s.tool.stencil = Some(st);
     }
     let st = s.tool.stencil.as_mut().ok_or_else(|| bad("tool.stencil", "no stencil: give `image`"))?;
-    if let Some(c) = color_param(p, "center").map(|c| [c[0], c[1]]).or_else(|| pair(p, "center")) {
+    if let Some(c) = p.get("center").and_then(color_of).map(|c| [c[0], c[1]]).or_else(|| pair(p, "center")) {
         st.center = c.map(|v| v.clamp(-4.0, 4.0));
     }
     if let Some(v) = f32p(p, "scale") {
