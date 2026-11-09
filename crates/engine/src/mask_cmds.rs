@@ -6,7 +6,7 @@ use texturecraft_core::{
     Procedural, ProceduralKind, Project, Source,
 };
 
-use crate::commands::{CommandSpec, always, bad, blend_param, boolp, channel_param, color_of, color_param, f32p, has_layer, layer_param, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, blend_param, boolp, channel_param, color_param, f32p, has_layer, layer_param, numbers_param, strp, u64p};
 use crate::layer_cmds::projection_from;
 use crate::session::StackTarget;
 use crate::{EngineError, Result, Session, cmd};
@@ -49,7 +49,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add generator",
             ["Layers", "Effects"],
             None,
-            "{layer?, name?, generator?: edgeWear|dirt|thinAreas|curvature|ambientOcclusion|position|direction, level?, softness?, noise?, invert?, mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear)}",
+            "{layer?, name?, generator?: edgeWear|dirt|thinAreas|curvature|ambientOcclusion|position|direction, direction?: [x,y,z] (the direction generator's), level?, softness?, noise?, invert?, mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear)}",
             has_layer,
             add_generator
         ),
@@ -334,7 +334,8 @@ fn generator_from(command: &str, params: &Value, generator: &mut Generator) -> R
     if let Some(invert) = boolp(params, "invert") {
         generator.invert = invert;
     }
-    if let Some(direction) = params.get("direction").and_then(color_of) {
+    // A direction, not a color: three numbers
+    if let Some(direction) = numbers_param(command, params, "direction")? {
         generator.direction = direction;
     }
 

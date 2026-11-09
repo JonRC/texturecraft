@@ -71,7 +71,8 @@ fn add_paint(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "layer": id.0 }))
 }
 
-/// A uniform fill from the `color`, `roughness`, `metallic`, `height` and `opacity` params.
+/// A uniform fill from the `color`, `roughness`, `metallic`, `height` and `opacity` params. Errors
+/// when `color` is given but is not a color.
 pub(crate) fn fill_from(cmd: &str, p: &Value) -> Result<Fill> {
     let mut fill = Fill::default();
     if let Some(c) = color_param(cmd, p, "color")? {
