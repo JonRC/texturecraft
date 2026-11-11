@@ -1,7 +1,7 @@
 //! UI state (serde, so the control channel can read and drive it).
 
 use serde::{Deserialize, Serialize};
-use texturecraft_engine::core::{BakedMap, Channel};
+use texturecraft_engine::core::{BakedMap, Channel, NormalFormat};
 
 use crate::docking::Dock;
 use crate::keymap::Keymap;
@@ -118,6 +118,13 @@ pub struct Prefs {
     /// Where autosaves, smart materials, presets, templates and layouts go (desktop; read at
     /// startup). Empty or relative: `Documents/TextureCraft`.
     pub data_folder: String,
+    /// Cores a project save leaves to the UI; Settings bounds this to the available logical CPUs
+    /// (desktop). At least one save worker always runs.
+    pub reserved_cores: u32,
+    /// Maximum decompressed project size accepted on open, in GiB (at least one).
+    pub project_open_limit_gib: u32,
+    /// Percent of the free RAM a project save may hold at once (desktop; 1 to 100).
+    pub save_ram_percent: u8,
 }
 
 impl Default for Prefs {
@@ -132,7 +139,19 @@ impl Default for Prefs {
             system_title_bar: false,
             start_window: true,
             data_folder: String::new(),
+            reserved_cores: 1,
+            project_open_limit_gib: texturecraft_engine::formats::DEFAULT_PROJECT_OPEN_LIMIT_GIB,
+            save_ram_percent: 50,
         }
+    }
+}
+
+impl Prefs {
+    /// Apply resource preferences before commands or file workers can start.
+    pub fn apply_resource_limits(&self) {
+        texturecraft_engine::formats::set_project_open_limit_gib(self.project_open_limit_gib);
+        #[cfg(not(target_arch = "wasm32"))]
+        texturecraft_engine::formats::set_save_resources(self.reserved_cores as usize, self.save_ram_percent);
     }
 }
 
@@ -151,6 +170,12 @@ pub struct NewProject {
     /// Name typed to save the current project's settings as a template.
     #[serde(skip)]
     pub template_name: String,
+    /// Normal map format of the project and its imported normal maps; None keeps the template's
+    #[serde(default)]
+    pub normal_format: Option<NormalFormat>,
+    /// Baked map files to import at creation, matched to sets and mesh maps by name (desktop only)
+    #[serde(skip)]
+    pub baked_maps: Vec<String>,
 }
 
 fn default_template() -> String {
@@ -167,6 +192,8 @@ impl Default for NewProject {
             uv_tiles: None,
             template: default_template(),
             template_name: String::new(),
+            normal_format: None,
+            baked_maps: Vec::new(),
         }
     }
 }
@@ -249,6 +276,9 @@ pub struct UiState {
     /// The docked, tabbed and floating panels around the viewport.
     #[serde(default)]
     pub dock: Dock,
+    /// The panel open against the icon rail, if any; not saved, so the app starts with the rail closed
+    #[serde(skip)]
+    pub rail_panel: Option<crate::docking::Panel>,
     #[serde(default = "Dock::for_baking")]
     pub(crate) inactive_mode_dock: Dock,
     #[serde(default)]
@@ -296,6 +326,12 @@ pub struct UiState {
     /// The brush that paints the skew correction map in the 2D view of bake mode.
     #[serde(default)]
     pub bake_paint_brush: crate::bake_mode::BakePaintBrush,
+    /// How the 3D view shows symmetry
+    #[serde(default)]
+    pub symmetry: crate::symmetry::SymmetryDisplay,
+    /// What bake mode's 3D view draws besides the low poly (the Baking Visualization panel)
+    #[serde(default)]
+    pub bake_visualization: crate::bake_mode::BakeVisualizationToggles,
 }
 
 impl UiState {
@@ -342,6 +378,7 @@ impl Default for UiState {
             layout: ViewLayout::Split,
             split_ratio: default_split_ratio(),
             dock: Dock::default(),
+            rail_panel: None,
             inactive_mode_dock: Dock::for_baking(),
             dock_is_baking: false,
             bake_layout_version: BAKE_LAYOUT_VERSION,
@@ -365,6 +402,8 @@ impl Default for UiState {
             recent: Vec::new(),
             keymap: Keymap::new(),
             bake_paint_brush: crate::bake_mode::BakePaintBrush::default(),
+            symmetry: crate::symmetry::SymmetryDisplay::default(),
+            bake_visualization: crate::bake_mode::BakeVisualizationToggles::default(),
         }
     }
 }
@@ -429,35 +468,13 @@ mod tests {
         }
     }
 
-    /// The app's own settings store: eframe keeps `UiState` as RON text under a key
-    #[derive(Default)]
-    struct MemoryStorage(std::collections::HashMap<String, String>);
-
-    impl eframe::Storage for MemoryStorage {
-        fn get_string(&self, key: &str) -> Option<String> {
-            self.0.get(key).cloned()
-        }
-
-        fn set_string(&mut self, key: &str, value: String) {
-            self.0.insert(key.to_string(), value);
-        }
-
-        fn remove_string(&mut self, key: &str) {
-            self.0.remove(key);
-        }
-
-        fn flush(&mut self) {}
-    }
-
     #[test]
     fn the_bake_layout_survives_a_restart_whichever_mode_was_open() {
         for mode in [Mode::Painting, Mode::Baking] {
             let mut ui = UiState { mode, ..UiState::default() };
             ui.sync_mode_dock();
-            let mut storage = MemoryStorage::default();
-            eframe::set_value(&mut storage, "ui", &ui);
 
-            let mut restarted: UiState = eframe::get_value(&storage, "ui").unwrap();
+            let mut restarted = crate::ui_state_store::tests::restart(&ui);
             restarted.sync_mode_dock();
             let bake_dock = if mode == Mode::Baking { &restarted.dock } else { &restarted.inactive_mode_dock };
             assert_eq!(*bake_dock, Dock::for_baking(), "{mode:?}");
