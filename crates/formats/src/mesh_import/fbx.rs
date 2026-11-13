@@ -576,6 +576,9 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
     raw.base_colors = base_colors;
     // In file order; FBX 6's built-in "Producer" views are not the scene's cameras.
     for o in objects.children.iter().filter(|o| o.name == "Model" && o.class() == "Camera" && !o.object_name().starts_with("Producer ")) {
+        if raw.cameras.len() >= super::MAX_CAMERAS {
+            break;
+        }
         let Some(id) = o.id_at(0) else { continue };
         if let Ok(m) = world(&models, &parents, &id) {
             raw.cameras.push(camera(o, attribute_of.get(&id).copied().unwrap_or(o), global * m));

@@ -299,6 +299,18 @@ fn fbx_binary_32_and_64_bit_compressed_or_not() {
 }
 
 /// [`scene`] with a diffuse color on Red and an embedded diffuse texture on Blue.
+#[test]
+fn fbx_camera_models_are_capped_during_import() {
+    let mut nodes = scene(false);
+    let objects = nodes.iter_mut().find(|node| node.name == "Objects").unwrap();
+    for id in 100..199 {
+        objects.children.push(n("Model", vec![P::L(id), P::S("Camera\\u{0}\\u{1}Model"), P::S("Camera")], vec![]));
+    }
+
+    let raw = fbx::read(&binary_fbx(&nodes, 7500, true)).unwrap();
+    assert_eq!(raw.cameras.len(), MAX_CAMERAS);
+}
+
 fn textured_scene(png: &[u8]) -> Vec<N> {
     let mut nodes = scene(false);
     let objects = nodes.iter_mut().find(|n| n.name == "Objects").unwrap();
