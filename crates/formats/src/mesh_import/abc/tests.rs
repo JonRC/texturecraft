@@ -244,6 +244,38 @@ fn strip_alone_keeps_uvs_flipped_to_v_down() {
 }
 
 #[test]
+fn half_float_uvs_import_without_losing_values() {
+    let mut a = Abc { w: Writer::new() };
+    let pp = a.array("P", "", F32, 3, &f32s(&[0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 1.0, 0.0, 0.0]));
+    let fi = a.array(".faceIndices", "", I32, 1, &i32s(&[0, 1, 2]));
+    let fc = a.array(".faceCounts", "", I32, 1, &i32s(&[3]));
+    let uv_bytes: Vec<u8> = [0u16, 0, 0x3800, 0x3c00, 0x3c00, 0].iter().flat_map(|x| x.to_le_bytes()).collect();
+    let uv = a.array("uv", "", 9, 2, &uv_bytes);
+    let geom = a.compound(".geom", "schema=AbcGeom_PolyMesh_v1", vec![pp, fi, fc, uv]);
+    let mesh = a.object(vec![geom], &[]);
+    let top = a.object(vec![], &[("m", "", mesh)]);
+    let imported = crate::import_mesh_bytes("m.abc", &a.archive(top, &["schema=AbcGeom_PolyMesh_v1"])).unwrap();
+    assert!(!imported.report.uvs_generated);
+    for (p, uv) in imported.mesh.positions.iter().zip(&imported.mesh.uvs) {
+        assert_eq!(*uv, texturecraft_geom::glam::Vec2::new(p.x, 1.0 - p.y));
+    }
+}
+
+#[test]
+fn half_float_values_preserve_special_values() {
+    let mut a = Abc { w: Writer::new() };
+    let raw: Vec<u8> = [0xc000u16, 0x0001, 0x7c00, 0x7e00].iter().flat_map(|x| x.to_le_bytes()).collect();
+    let p = a.array("values", "", 9, 1, &raw);
+    let property = Prop { name: p.name.into(), meta: p.meta, kind: PropKind::Array, pod: 9, extent: 1, group: p.group };
+    let mut ogawa = Ogawa { b: &a.w.b, budget: MAX_DECODED_BYTES, indexed_meta: Vec::new() };
+    let values = ogawa.values(&property).unwrap();
+    assert_eq!(values[0], -2.0);
+    assert_eq!(values[1], 2f64.powi(-24));
+    assert_eq!(values[2], f64::INFINITY);
+    assert!(values[3].is_nan());
+}
+
+#[test]
 fn hdf5_and_garbage_are_clear_errors() {
     let e = read(b"\x89HDF\r\n\x1a\n rest of an hdf5 file").err().unwrap().to_string();
     assert!(e.contains("HDF5") && e.contains("Ogawa"), "{e}");

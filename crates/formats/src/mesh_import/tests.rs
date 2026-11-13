@@ -118,6 +118,48 @@ fn glb_two_materials_mirrored_node() {
     m.validate().unwrap();
 }
 
+/// A scene without a `nodes` array is legal glTF (Blender writes one for a scene with no exported
+/// objects); it must not stop the default scene from importing.
+#[test]
+fn gltf_scene_without_nodes_imports_the_default_scene() {
+    let mut json: serde_json::Value = serde_json::from_slice(&embedded_gltf()).unwrap();
+    json["scenes"] = serde_json::json!([{ "name": "EmptyReviewScene" }, { "nodes": [0] }]);
+    json["scene"] = 1.into();
+    let im = import_mesh_bytes("scene.gltf", &serde_json::to_vec(&json).unwrap()).unwrap();
+    assert_eq!(im.report.triangles, 2);
+    // Only an empty scene: nothing to import, but a clear error rather than a parse failure.
+    json["scenes"] = serde_json::json!([{ "name": "EmptyReviewScene" }]);
+    json["scene"] = 0.into();
+    let err = import_mesh_bytes("scene.gltf", &serde_json::to_vec(&json).unwrap()).unwrap_err();
+    assert!(!err.to_string().contains("missing field"), "{err}");
+}
+
+#[test]
+fn glb_scene_without_nodes_keeps_binary_mesh_in_default_scene() {
+    let original = glb(true, true);
+    let jlen = u32::from_le_bytes(original[12..16].try_into().unwrap()) as usize;
+    let mut json: serde_json::Value = serde_json::from_slice(&original[20..20 + jlen]).unwrap();
+    json["scenes"] = serde_json::json!([{ "name": "EmptyReviewScene" }, { "nodes": [0] }]);
+    json["scene"] = 1.into();
+    let mut js = serde_json::to_vec(&json).unwrap();
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    let bin_chunk = &original[20 + jlen..];
+    let mut glb = Vec::new();
+    glb.extend(b"glTF");
+    glb.extend(2u32.to_le_bytes());
+    glb.extend(((20 + js.len() + bin_chunk.len()) as u32).to_le_bytes());
+    glb.extend((js.len() as u32).to_le_bytes());
+    glb.extend(b"JSON");
+    glb.extend(js);
+    glb.extend(bin_chunk);
+    let im = import_mesh_bytes("scene.glb", &glb).unwrap();
+    assert_eq!(im.report.triangles, 2);
+    assert_eq!(im.mesh.materials, ["Red", "Material_1"]);
+    assert_outward(&im.mesh);
+}
+
 #[test]
 fn gltf_embedded_buffers_and_missing_attributes() {
     let im = import_mesh_bytes("scene.gltf", &embedded_gltf()).unwrap();
@@ -233,6 +275,33 @@ fn obj_without_uvs_or_normals_is_completed() {
     // Smooth normals over welded positions: every copy of a corner shares one normal.
     let n0: Vec<Vec3> = im.mesh.positions.iter().zip(&im.mesh.normals).filter(|(p, _)| **p == Vec3::ZERO).map(|(_, n)| *n).collect();
     assert!(n0.len() > 1 && n0.iter().all(|n| (*n - n0[0]).length() < 1e-5));
+}
+
+#[test]
+fn obj_with_some_objects_having_uvs_preserves_uvs_without_full_unwrap() {
+    let obj = "o Body
+v 0 0 0
+v 1 0 0
+v 1 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+f 1/1 2/2 3/3
+o Helper
+v 2 0 0
+v 3 0 0
+v 3 1 0
+f 4 5 6
+";
+    let im = import_mesh_bytes("character.obj", obj.as_bytes()).unwrap();
+    assert!(!im.report.uvs_generated);
+    assert_eq!(im.mesh.uvs[0], Vec2::new(0.0, 1.0));
+    assert_eq!(im.mesh.uvs[1], Vec2::new(1.0, 1.0));
+    assert_eq!(im.mesh.uvs[2], Vec2::new(1.0, 0.0));
+    assert_eq!(im.mesh.uvs[3], Vec2::ZERO);
+    assert_eq!(im.mesh.uvs[4], Vec2::ZERO);
+    assert_eq!(im.mesh.uvs[5], Vec2::ZERO);
+    assert!(im.report.warnings.iter().any(|w| w.contains("some objects have no UVs")));
 }
 
 #[test]

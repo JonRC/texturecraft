@@ -32,6 +32,8 @@ const MIN_VERSION: i64 = 6000;
 const MAX_DEPTH: usize = 64;
 /// Memory budget for parsed nodes and properties (arrays are held as f64).
 const MAX_DECODED_BYTES: usize = 1 << 31;
+/// Maximum control points transformed across all mesh instances in one import.
+const MAX_INSTANCE_POINTS: usize = 200_000_000;
 /// Approximate memory charged per node and per scalar property.
 const NODE_COST: usize = 96;
 const PROP_COST: usize = 32;
@@ -254,39 +256,39 @@ impl<'a> Binary<'a> {
         })
     }
 
-    fn array(&mut self, ty: u8) -> Result<Vec<f64>> {
+    fn array(&mut self, value_type: u8) -> Result<Vec<f64>> {
         let (count, encoding, stored) = (self.u32()?, self.u32()?, self.u32()?);
-        let size = match ty {
+        let value_bytes = match value_type {
             b'd' | b'l' => 8,
             b'f' | b'i' => 4,
             _ => 1,
         };
-        let len = count.checked_mul(size).ok_or_else(|| malformed(KIND, "array too large"))?;
+        let decoded_bytes = count.checked_mul(value_bytes).ok_or_else(|| malformed(KIND, "array too large"))?;
         self.budget.charge(count.saturating_mul(8))?;
+
         let data = self.take(stored)?;
         let raw: Cow<[u8]> = match encoding {
-            0 if stored == len => Cow::Borrowed(data),
+            0 if stored == decoded_bytes => Cow::Borrowed(data),
             1 => {
                 let mut out = Vec::new();
                 flate2::read::ZlibDecoder::new(data)
-                    .take(len as u64 + 1)
+                    .take(decoded_bytes as u64 + 1)
                     .read_to_end(&mut out)
                     .map_err(|e| malformed(KIND, format!("bad compressed array: {e}")))?;
-                if out.len() != len {
+                if out.len() != decoded_bytes {
                     return Err(malformed(KIND, "compressed array has the wrong length"));
                 }
+
                 Cow::Owned(out)
             }
             _ => return Err(malformed(KIND, format!("array encoding {encoding} with {stored} bytes for {count} items"))),
         };
-        fn le<const N: usize>(c: &[u8]) -> [u8; N] {
-            <[u8; N]>::try_from(c).unwrap_or([0; N])
-        }
-        Ok(match ty {
-            b'd' => raw.chunks_exact(8).map(|c| f64::from_le_bytes(le(c))).collect(),
-            b'l' => raw.chunks_exact(8).map(|c| i64::from_le_bytes(le(c)) as f64).collect(),
-            b'f' => raw.chunks_exact(4).map(|c| f32::from_le_bytes(le(c)) as f64).collect(),
-            b'i' => raw.chunks_exact(4).map(|c| i32::from_le_bytes(le(c)) as f64).collect(),
+
+        Ok(match value_type {
+            b'd' => raw.as_chunks::<8>().0.iter().map(|c| f64::from_le_bytes(*c)).collect(),
+            b'l' => raw.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(*c) as f64).collect(),
+            b'f' => raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c) as f64).collect(),
+            b'i' => raw.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(*c) as f64).collect(),
             _ => raw.iter().map(|b| *b as f64).collect(),
         })
     }
@@ -542,6 +544,9 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
             attribute_of.insert(parent, *a);
         }
     }
+    // Repeated connections describe the same instance; keep distinct model placements in order.
+    let mut seen_instances = HashSet::new();
+    instances.retain(|instance| seen_instances.insert(instance.clone()));
     let placed: HashSet<&String> = instances.iter().map(|(g, _)| g).collect();
     let mut unplaced: Vec<String> = geometries.keys().filter(|g| !placed.contains(g)).cloned().collect();
     unplaced.sort_unstable();
@@ -550,6 +555,7 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
     let base_colors = base_colors(&materials, &textures, &videos, &connections, files);
     let global = global_transform(root("GlobalSettings").or_else(|| objects.child("GlobalSettings")));
     let mut sink = PolygonSink::default();
+    let mut remaining_points = MAX_INSTANCE_POINTS;
     let no_slots = Vec::new();
     for (geom, model) in instances {
         let Some(g) = geometries.get(&geom) else { continue };
@@ -564,12 +570,15 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
             }
         };
         let names = model.as_ref().and_then(|m| slots.get(m)).unwrap_or(&no_slots);
-        add_geometry(&mut sink, g, global * m, names)?;
+        add_geometry(&mut sink, g, global * m, names, &mut remaining_points)?;
     }
     let mut raw = sink.finish();
     raw.base_colors = base_colors;
     // In file order; FBX 6's built-in "Producer" views are not the scene's cameras.
     for o in objects.children.iter().filter(|o| o.name == "Model" && o.class() == "Camera" && !o.object_name().starts_with("Producer ")) {
+        if raw.cameras.len() >= super::MAX_CAMERAS {
+            break;
+        }
         let Some(id) = o.id_at(0) else { continue };
         if let Ok(m) = world(&models, &parents, &id) {
             raw.cameras.push(camera(o, attribute_of.get(&id).copied().unwrap_or(o), global * m));
@@ -783,29 +792,37 @@ impl Layer<'_> {
     }
 }
 
-fn add_geometry(sink: &mut PolygonSink, g: &Node, m: Mat4, slots: &[String]) -> Result<()> {
-    let verts = g.child("Vertices").map(Node::arr).unwrap_or_default();
-    check_vertices(verts.len() / 3)?;
-    let points: Vec<Vec3> = verts.chunks_exact(3).map(|c| m.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
-    let pvi = g.child("PolygonVertexIndex").map(Node::arr).unwrap_or_default();
-    let normals = Layer::read(g, "LayerElementNormal", "Normals", "NormalsIndex");
-    let uvs = Layer::read(g, "LayerElementUV", "UV", "UVIndex");
-    let mats = Layer::read(g, "LayerElementMaterial", "Materials", "");
-    let nm = Mat3::from_mat4(m).inverse().transpose();
-    let flip = m.determinant() < 0.0;
-    let (mut corners, mut poly, mut bad_normals, mut bad_uvs) = (Vec::new(), 0usize, 0usize, 0usize);
-    for (k, &v) in pvi.iter().enumerate() {
-        // The last corner of each polygon is stored as -(index + 1).
-        let (cp, last) = if v < 0.0 { (-v - 1.0, true) } else { (v, false) };
-        let p = points.get(cp as usize).filter(|_| cp.fract() == 0.0).ok_or_else(|| malformed(KIND, format!("polygon vertex index {v} out of range")))?;
-        let cp = cp as usize;
+fn add_geometry(sink: &mut PolygonSink, geometry: &Node, transform: Mat4, slots: &[String], remaining_points: &mut usize) -> Result<()> {
+    let vertices = geometry.child("Vertices").map(Node::arr).unwrap_or_default();
+    check_vertices(vertices.len() / 3)?;
+    *remaining_points = remaining_points
+        .checked_sub(vertices.len() / 3)
+        .ok_or_else(|| FormatError::TooLarge(format!("FBX instances exceed the {MAX_INSTANCE_POINTS} control-point work limit")))?;
+    let points: Vec<Vec3> = vertices.as_chunks::<3>().0.iter().map(|c| transform.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
+    let polygon_indices = geometry.child("PolygonVertexIndex").map(Node::arr).unwrap_or_default();
+    let normals = Layer::read(geometry, "LayerElementNormal", "Normals", "NormalsIndex");
+    let uvs = Layer::read(geometry, "LayerElementUV", "UV", "UVIndex");
+    let materials = Layer::read(geometry, "LayerElementMaterial", "Materials", "");
+    let normal_transform = Mat3::from_mat4(transform).inverse().transpose();
+    let flip = transform.determinant() < 0.0;
+    let (mut corners, mut polygon_index, mut bad_normals, mut bad_uvs) = (Vec::new(), 0usize, 0usize, 0usize);
+
+    for (k, &v) in polygon_indices.iter().enumerate() {
+        // The last corner of each polygon is stored as -(index + 1)
+        let (control_point, last) = if v < 0.0 { (-v - 1.0, true) } else { (v, false) };
+        let p = points
+            .get(control_point as usize)
+            .filter(|_| control_point.fract() == 0.0)
+            .ok_or_else(|| malformed(KIND, format!("polygon vertex index {v} out of range")))?;
+        let control_point = control_point as usize;
         let n = normals.as_ref().and_then(|l| {
-            let n = l.get(k, cp, poly).map(|[x, y, z]| nm * Vec3::new(x as f32, y as f32, z as f32));
+            let n = l.get(k, control_point, polygon_index).map(|[x, y, z]| normal_transform * Vec3::new(x as f32, y as f32, z as f32));
             bad_normals += usize::from(n.is_none());
             n
         });
-        // A UV layer with holes keeps its layout: missing items read as 0, 0.
-        let uv = uvs.as_ref().map(|l| match l.get(k, cp, poly) {
+
+        // A UV layer with holes keeps its layout: missing items read as 0, 0
+        let uv = uvs.as_ref().map(|l| match l.get(k, control_point, polygon_index) {
             Some([u, v]) => Vec2::new(u as f32, 1.0 - v as f32),
             None => {
                 bad_uvs += 1;
@@ -813,22 +830,44 @@ fn add_geometry(sink: &mut PolygonSink, g: &Node, m: Mat4, slots: &[String]) -> 
             }
         });
         corners.push(Corner { p: *p, n, uv });
-        if last || k + 1 == pvi.len() {
+        if last || k + 1 == polygon_indices.len() {
             if flip {
                 corners.reverse();
             }
-            let slot = mats.as_ref().and_then(|l| l.get(poly, poly, poly)).map_or(0.0, |[s]| s);
+            let slot = materials.as_ref().and_then(|l| l.get(polygon_index, polygon_index, polygon_index)).map_or(0.0, |[s]| s);
             let name = slots.get(slot as usize).filter(|_| slot >= 0.0).map_or("Default", String::as_str);
             sink.polygon(name, &corners)?;
             corners.clear();
-            poly += 1;
+            polygon_index += 1;
         }
     }
+
     if bad_normals > 0 {
         sink.warn(format!("{bad_normals} polygon corners have no normal in the FBX normal layer; normals were recomputed"));
     }
     if bad_uvs > 0 {
         sink.warn(format!("{bad_uvs} polygon corners have no UV in the FBX UV layer (set to 0, 0)"));
     }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod instance_budget_tests {
+    use super::*;
+
+    #[test]
+    fn instance_points_are_charged_before_transforming_each_copy() {
+        let geometry = Node {
+            name: "Geometry".into(),
+            props: vec![],
+            children: vec![Node { name: "Vertices".into(), props: vec![Prop::Arr(vec![0.0; 9])], children: vec![] }],
+        };
+        let mut sink = PolygonSink::default();
+        let mut remaining = 5;
+        add_geometry(&mut sink, &geometry, Mat4::IDENTITY, &[], &mut remaining).unwrap();
+        assert_eq!(remaining, 2);
+        assert!(matches!(add_geometry(&mut sink, &geometry, Mat4::IDENTITY, &[], &mut remaining), Err(FormatError::TooLarge(_))));
+        assert_eq!(remaining, 2);
+    }
 }
