@@ -544,6 +544,9 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
             attribute_of.insert(parent, *a);
         }
     }
+    // Repeated connections describe the same instance; keep distinct model placements in order.
+    let mut seen_instances = HashSet::new();
+    instances.retain(|instance| seen_instances.insert(instance.clone()));
     let placed: HashSet<&String> = instances.iter().map(|(g, _)| g).collect();
     let mut unplaced: Vec<String> = geometries.keys().filter(|g| !placed.contains(g)).cloned().collect();
     unplaced.sort_unstable();

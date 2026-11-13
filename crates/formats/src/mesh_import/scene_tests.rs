@@ -415,6 +415,24 @@ fn fbx_ascii_and_z_up() {
     check_fbx_scene(&import_mesh_bytes("z.fbx", &binary_fbx(&scene(true), 7700, true)).unwrap().mesh, true);
 }
 
+#[test]
+fn fbx_duplicate_geometry_connections_do_not_duplicate_instances() {
+    let mut nodes = scene(false);
+    let connections = nodes.iter_mut().find(|node| node.name == "Connections").unwrap();
+    for _ in 0..50 {
+        connections.children.push(n("C", vec![P::S("OO"), P::L(10), P::L(21)], vec![]));
+    }
+    let imported = import_mesh_bytes("scene.fbx", ascii_fbx(&nodes).as_bytes()).unwrap();
+    assert_eq!(imported.report.triangles, 3);
+
+    let objects = nodes.iter_mut().find(|node| node.name == "Objects").unwrap();
+    objects.children.push(n("Model", vec![P::L(22), P::S("Other\u{0}\u{1}Model"), P::S("Mesh")], vec![]));
+    let connections = nodes.iter_mut().find(|node| node.name == "Connections").unwrap();
+    connections.children.push(n("C", vec![P::S("OO"), P::L(10), P::L(22)], vec![]));
+    let imported = import_mesh_bytes("scene.fbx", ascii_fbx(&nodes).as_bytes()).unwrap();
+    assert_eq!(imported.report.triangles, 6, "a different model must remain a distinct instance");
+}
+
 /// The scene of [`scene`] (Y up) as FBX 6.1 writes it: geometry inside the Model, objects named
 /// `Class::Name`, `Properties60`, `Connect` records, GlobalSettings inside Objects.
 const FBX61: &str = r#"; FBX 6.1.0 project file
