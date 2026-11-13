@@ -217,7 +217,7 @@ impl<'a> Ogawa<'a> {
 
         let value_bytes = match property.pod {
             0..=2 => 1,
-            3 | 4 => 2,
+            3 | 4 | 9 => 2,
             5 | 6 | 10 => 4,
             7 | 8 | 11 => 8,
             other => return Err(FormatError::Unsupported(format!("Alembic property \"{}\" of data type {other}", property.name))),
@@ -233,6 +233,7 @@ impl<'a> Ogawa<'a> {
             6 => raw.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(*c) as f64).collect(),
             7 => raw.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c) as f64).collect(),
             8 => raw.as_chunks::<8>().0.iter().map(|c| i64::from_le_bytes(*c) as f64).collect(),
+            9 => raw.as_chunks::<2>().0.iter().map(|c| half::f16::from_bits(u16::from_le_bytes(*c)).to_f64()).collect(),
             10 => raw.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c) as f64).collect(),
             _ => raw.as_chunks::<8>().0.iter().map(|c| f64::from_le_bytes(*c)).collect(),
         })
