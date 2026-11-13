@@ -32,6 +32,8 @@ const MIN_VERSION: i64 = 6000;
 const MAX_DEPTH: usize = 64;
 /// Memory budget for parsed nodes and properties (arrays are held as f64).
 const MAX_DECODED_BYTES: usize = 1 << 31;
+/// Maximum control points transformed across all mesh instances in one import.
+const MAX_INSTANCE_POINTS: usize = 200_000_000;
 /// Approximate memory charged per node and per scalar property.
 const NODE_COST: usize = 96;
 const PROP_COST: usize = 32;
@@ -550,6 +552,7 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
     let base_colors = base_colors(&materials, &textures, &videos, &connections, files);
     let global = global_transform(root("GlobalSettings").or_else(|| objects.child("GlobalSettings")));
     let mut sink = PolygonSink::default();
+    let mut remaining_points = MAX_INSTANCE_POINTS;
     let no_slots = Vec::new();
     for (geom, model) in instances {
         let Some(g) = geometries.get(&geom) else { continue };
@@ -564,7 +567,7 @@ fn read_inner(bytes: &[u8], files: &mut Files) -> Result<RawMesh> {
             }
         };
         let names = model.as_ref().and_then(|m| slots.get(m)).unwrap_or(&no_slots);
-        add_geometry(&mut sink, g, global * m, names)?;
+        add_geometry(&mut sink, g, global * m, names, &mut remaining_points)?;
     }
     let mut raw = sink.finish();
     raw.base_colors = base_colors;
@@ -783,9 +786,12 @@ impl Layer<'_> {
     }
 }
 
-fn add_geometry(sink: &mut PolygonSink, geometry: &Node, transform: Mat4, slots: &[String]) -> Result<()> {
+fn add_geometry(sink: &mut PolygonSink, geometry: &Node, transform: Mat4, slots: &[String], remaining_points: &mut usize) -> Result<()> {
     let vertices = geometry.child("Vertices").map(Node::arr).unwrap_or_default();
     check_vertices(vertices.len() / 3)?;
+    *remaining_points = remaining_points
+        .checked_sub(vertices.len() / 3)
+        .ok_or_else(|| FormatError::TooLarge(format!("FBX instances exceed the {MAX_INSTANCE_POINTS} control-point work limit")))?;
     let points: Vec<Vec3> = vertices.as_chunks::<3>().0.iter().map(|c| transform.transform_point3(Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32))).collect();
     let polygon_indices = geometry.child("PolygonVertexIndex").map(Node::arr).unwrap_or_default();
     let normals = Layer::read(geometry, "LayerElementNormal", "Normals", "NormalsIndex");
@@ -838,4 +844,24 @@ fn add_geometry(sink: &mut PolygonSink, geometry: &Node, transform: Mat4, slots:
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod instance_budget_tests {
+    use super::*;
+
+    #[test]
+    fn instance_points_are_charged_before_transforming_each_copy() {
+        let geometry = Node {
+            name: "Geometry".into(),
+            props: vec![],
+            children: vec![Node { name: "Vertices".into(), props: vec![Prop::Arr(vec![0.0; 9])], children: vec![] }],
+        };
+        let mut sink = PolygonSink::default();
+        let mut remaining = 5;
+        add_geometry(&mut sink, &geometry, Mat4::IDENTITY, &[], &mut remaining).unwrap();
+        assert_eq!(remaining, 2);
+        assert!(matches!(add_geometry(&mut sink, &geometry, Mat4::IDENTITY, &[], &mut remaining), Err(FormatError::TooLarge(_))));
+        assert_eq!(remaining, 2);
+    }
 }
